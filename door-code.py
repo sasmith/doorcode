@@ -39,7 +39,7 @@ def main(event, context):
   if matching_code_task:
     return WRAPPER.format('<Play digits="9999"/>'.format(matching_code_task["id"]))
   else:
-    return WRAPPER.format("<Say>Entered code didn't match to {} single use codes and {} permament codes.</Say>".format(
+    return WRAPPER.format("<Say>Entered code didn't match to {} single use codes and {} permanent codes.</Say>".format(
       len(single_use), len(permanent)))
 
 if __name__ == "__main__":
