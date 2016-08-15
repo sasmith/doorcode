@@ -1,46 +1,96 @@
 import urlparse
+import datetime
+import time
 
 import asana
 
 PAT = "0/974dbc9aa422d2d59d5d2b1dca9df126"
 PROJECT_ID = 68058660785829
-PERMANENT = "Permanent:"
+MULTI_USE = "Multi Use:"
 SINGLE_USE = "Single Use:"
+SINGLE_USE_REUSABLE_WINDOW_S = 300
 DIGITS = "Digits"
 
 WRAPPER = '<?xml version="1.0" encoding="UTF-8"?><Response><Pause length="2"/>{}</Response>'
 
+def timestamp_from_string(utc_time_str):
+  """
+  >>> timestamp_from_string("2015-11-22T08:27:33.684Z")
+  1448180853.684
+  """
+  task_completion_datetime = datetime.datetime.strptime(utc_time_str, "%Y-%m-%dT%H:%M:%S.%fZ")
+  # This is a UTC timestamp. Instead of dealing with timezones, we'll just get seconds since epoch.
+  # Note that what we're subtracting is also a naive timestamp.
+  return (task_completion_datetime - datetime.datetime(1970, 1, 1)).total_seconds()
+
+def is_single_use(task):
+  """
+  >>> is_single_use({u'name': u'12345', u'id': 68058660785836, u'memberships': [{u'section': {u'id': 68058660785832, u'name': u'Single Use:'}}], u'completed_at': None})
+  True
+  >>> is_single_use({u'name': u'12345', u'id': 68058660785836, u'memberships': [{u'section': {u'id': 68058660785832, u'name': u'Multi Use:'}}], u'completed_at': None})
+  False
+  """
+  section_names = [membership["section"]["name"] for membership in task["memberships"]]
+  return SINGLE_USE in section_names
+
+def represents_valid_code(task, code, now_for_testing=None):
+  """
+  >>> now = 1448261901.005712
+  >>> past_datetime_str = u'2015-11-23T01:22:33.000Z'
+  >>> recent_datetime_str = u'2015-11-24T06:58:00.000Z'
+  >>> represents_valid_code({u'name': u'', u'id': 68058660785836, u'memberships': [{u'section': {u'id': 68058660785832, u'name': u'Single Use:'}}], u'completed_at': None}, "", now)
+  False
+  >>> represents_valid_code({u'name': u'Single Use:', u'id': 68058660785836, u'memberships': [{u'section': {u'id': 68058660785832, u'name': u'Single Use:'}}], u'completed_at': None}, "Single Use:", now)
+  False
+  >>> represents_valid_code({u'name': u'12345', u'id': 68058660785836, u'memberships': [{u'section': {u'id': 68058660785832, u'name': u'Single Use:'}}], u'completed_at': None}, "12345", now)
+  True
+  >>> represents_valid_code({u'name': u'12345', u'id': 68058660785836, u'memberships': [{u'section': {u'id': 68058660785832, u'name': u'Single Use:'}}], u'completed_at': None}, "4567", now)
+  False
+  >>> represents_valid_code({u'name': u'12345', u'id': 68058660785836, u'memberships': [{u'section': {u'id': 68058660785832, u'name': u'Single Use:'}}], u'completed_at': past_datetime_str}, "12345", now)
+  False
+  >>> represents_valid_code({u'name': u'12345', u'id': 68058660785836, u'memberships': [{u'section': {u'id': 68058660785832, u'name': u'Single Use:'}}], u'completed_at': recent_datetime_str}, "12345", now)
+  True
+  >>> represents_valid_code({u'name': u'12345', u'id': 68058660785836, u'memberships': [{u'section': {u'id': 68058660785832, u'name': u'Multi Use:'}}], u'completed_at': recent_datetime_str}, "12345", now)
+  False
+  """
+  now = time.time()
+  if now_for_testing is not None:
+    now = now_for_testing
+  if task["name"].endswith(":") or task["name"] == "":
+    return False
+  if task["name"] != code:
+    return False
+  if task["completed_at"] is None:
+    return True
+  elif not is_single_use(task):
+    # multi-use codes should die as soon as completed, since they must have been completed in the app.
+    return False
+  else:
+    completion_age = now - timestamp_from_string(task["completed_at"])
+    return completion_age <= SINGLE_USE_REUSABLE_WINDOW_S
+
 def main(event, context):
   print("Starting processing")
-  print("event", event)
-  print("context", context)
   digits = urlparse.parse_qs(event["data"]).get(DIGITS)
   if not digits:
-    return WRAPPER.format('<Gather timeout="10" finishOnKey="#"><Say>Please enter a door code.</Say></Gather>')
+    return WRAPPER.format('<Gather timeout="10" finishOnKey="#"><Say>Please enter a door code, followed by pound.</Say></Gather>')
 
   assert len(digits) == 1
   code = digits[0]
   client = asana.client.Client(access_token=PAT)
-  code_tasks = client.projects.tasks(PROJECT_ID, fields=["id", "name", "memberships.section.name", "completed"])
-  single_use = []
-  permanent = []
-  matching_code_task = None
+  # Unclear what to do for due at vs due on. In particular, if a code is due on Monday, the code should expire at the end
+  # of Monday; but if it's due at Monday at midnight, then it should expire immediately after that.
+  code_tasks = client.projects.tasks(PROJECT_ID, fields=["id", "name", "memberships.section.name", "completed_at"])
   for task in code_tasks:
-    if task["name"].endswith(":"):
-      continue
-    if task["name"] == code:
-      matching_code_task = task
-    section_names = [membership["section"]["name"] for membership in task["memberships"]]
-    if SINGLE_USE in section_names:
-      single_use.append(task)
-    else:
-      permanent.append(task)
-
-  if matching_code_task:
-    return WRAPPER.format('<Play digits="9999"/>'.format(matching_code_task["id"]))
+    if represents_valid_code(task, code):
+      break
   else:
-    return WRAPPER.format("<Say>Entered code didn't match to {} single use codes and {} permanent codes.</Say>".format(
-      len(single_use), len(permanent)))
+    return WRAPPER.format("<Say>Sorry, no matching code found.</Say>")
+
+  if is_single_use(task) and task["completed_at"] is None:
+    client.tasks.update(task["id"], completed=True)
+  return WRAPPER.format('<Play digits="9999"/>')
 
 if __name__ == "__main__":
-  print(main({}, {}))
+  import doctest
+  doctest.testmod()
