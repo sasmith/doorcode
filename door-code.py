@@ -85,7 +85,7 @@ def main(event, context):
     if represents_valid_code(task, code):
       break
   else:
-    return WRAPPER.format("<Say>Sorry, no matching code found.</Say>")
+    return WRAPPER.format("<Say>Sorry, no matching code found. Got {}.</Say>".format(code))
 
   if is_single_use(task) and task["completed_at"] is None:
     client.tasks.update(task["id"], completed=True)

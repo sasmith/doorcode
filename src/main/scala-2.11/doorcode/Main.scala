@@ -51,7 +51,7 @@ class Main {
     val contents: String = event.Digits match {
       case None => "<Gather timeout=\"10\" finishOnKey=\"#\"><Say>Please enter a door code, followed by pound.</Say></Gather>"
       case Some(CODE) => """<Play digits="9999"/>"""
-      case _ => "<Say>Sorry, no matching code found.</Say>"
+      case Some(digits) => s"<Say>Sorry, no matching code found. Got $digits</Say>"
     }
     val result = String.format(WRAPPER, contents)
     println("output:")
