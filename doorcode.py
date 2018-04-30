@@ -1,10 +1,12 @@
-import urlparse
+from base64 import b64decode
 import datetime
+import os
 import time
 
 import asana
+import boto3
 
-PAT = "0/974dbc9aa422d2d59d5d2b1dca9df126"
+PAT = os.environ['ASANA_PAT']
 PROJECT_ID = 68058660785829
 MULTI_USE = "Multi Use:"
 SINGLE_USE = "Single Use:"
@@ -71,21 +73,21 @@ def represents_valid_code(task, code, now_for_testing=None):
 
 def main(event, context):
   print("Starting processing")
-  digits = urlparse.parse_qs(event["data"]).get(DIGITS)
+  digits = event.get(DIGITS)
   if not digits:
     return WRAPPER.format('<Gather timeout="10" finishOnKey="#"><Say>Please enter a door code, followed by pound.</Say></Gather>')
 
-  assert len(digits) == 1
-  code = digits[0]
   client = asana.client.Client(access_token=PAT)
   # Unclear what to do for due at vs due on. In particular, if a code is due on Monday, the code should expire at the end
   # of Monday; but if it's due at Monday at midnight, then it should expire immediately after that.
   code_tasks = client.projects.tasks(PROJECT_ID, fields=["id", "name", "memberships.section.name", "completed_at"])
   for task in code_tasks:
-    if represents_valid_code(task, code):
+    if represents_valid_code(task, digits):
       break
   else:
-    return WRAPPER.format("<Say>Sorry, no matching code found. Got {}.</Say>".format(code))
+    return WRAPPER.format(
+        "<Say>Sorry, no matching code found. Got {}.</Say>".format(digits)
+    )
 
   if is_single_use(task) and task["completed_at"] is None:
     client.tasks.update(task["id"], completed=True)
