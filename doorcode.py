@@ -1,4 +1,3 @@
-from base64 import b64decode
 import datetime
 import os
 import time
@@ -7,11 +6,10 @@ import asana
 import boto3
 
 PAT = os.environ['ASANA_PAT']
-PROJECT_ID = 68058660785829
-MULTI_USE = "Multi Use:"
-SINGLE_USE = "Single Use:"
+PROJECT_ID = int(os.environ['PROJECT_ID'])
+SINGLE_USE_CF_ID = int(os.environ['SINGLE_USE_CF_ID'])
 SINGLE_USE_REUSABLE_WINDOW_S = 300
-DIGITS = "Digits"
+DIGITS = 'Digits'
 
 WRAPPER = '<?xml version="1.0" encoding="UTF-8"?><Response><Pause length="2"/>{}</Response>'
 
@@ -27,13 +25,16 @@ def timestamp_from_string(utc_time_str):
 
 def is_single_use(task):
   """
+  xcxc
   >>> is_single_use({u'name': u'12345', u'id': 68058660785836, u'memberships': [{u'section': {u'id': 68058660785832, u'name': u'Single Use:'}}], u'completed_at': None})
   True
   >>> is_single_use({u'name': u'12345', u'id': 68058660785836, u'memberships': [{u'section': {u'id': 68058660785832, u'name': u'Multi Use:'}}], u'completed_at': None})
   False
   """
-  section_names = [membership["section"]["name"] for membership in task["memberships"]]
-  return SINGLE_USE in section_names
+  return any(
+      cf['id'] == SINGLE_USE_CF_ID and cf['enum_value'] is not None
+      for cf in task['custom_fields']
+  )
 
 def represents_valid_code(task, code, now_for_testing=None):
   """
@@ -77,10 +78,10 @@ def main(event, context):
   if not digits:
     return WRAPPER.format('<Gather timeout="10" finishOnKey="#"><Say>Please enter a door code, followed by pound.</Say></Gather>')
 
-  client = asana.client.Client(access_token=PAT)
+  client = asana.Client.access_token(PAT)
   # Unclear what to do for due at vs due on. In particular, if a code is due on Monday, the code should expire at the end
   # of Monday; but if it's due at Monday at midnight, then it should expire immediately after that.
-  code_tasks = client.projects.tasks(PROJECT_ID, fields=["id", "name", "memberships.section.name", "completed_at"])
+  code_tasks = client.projects.tasks(PROJECT_ID, fields=["id", "name", "custom_fields", "completed_at"])
   for task in code_tasks:
     if represents_valid_code(task, digits):
       break
